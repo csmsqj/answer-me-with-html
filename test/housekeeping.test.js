@@ -279,9 +279,14 @@ test('readState / writeState: a broken file counts as empty state; writing leave
   assert.deepEqual(readdirSync(home).filter((f) => f.startsWith('state')), ['state.json']);
 });
 
-test('usage / clean: skip dangling symlinks without throwing', () => {
+test('usage / clean: skip dangling symlinks without throwing', (t) => {
   file('pages/a.html', 10, 40);
-  symlinkSync(join(home, 'nowhere'), join(home, 'pages', 'dangling.html'));
+  try {
+    symlinkSync(join(home, 'nowhere'), join(home, 'pages', 'dangling.html'));
+  } catch (e) {
+    if (process.platform === 'win32' && e.code === 'EPERM') return t.skip('Windows file symlinks need Developer Mode or elevation');
+    throw e;
+  }
   assert.equal(usage(home).pages.count, 1);
   assert.equal(clean(home, { now: NOW }).files, 1);
 });

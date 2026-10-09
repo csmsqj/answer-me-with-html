@@ -2,7 +2,7 @@
 // Usage: node scripts/snapshot.mjs [ref] (default origin/main)
 // Prints whether each combination's HTML is byte-identical. Compares only; leaves no files in the repository.
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync, symlinkSync, unlinkSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -98,7 +98,8 @@ const work = mkdtempSync(join(tmpdir(), 'am-snapshot-'));
 const refDir = join(work, 'src-ref');
 try {
   execFileSync('git', ['-C', ROOT, 'worktree', 'add', '--detach', refDir, ref], { stdio: 'ignore' });
-  symlinkSync(join(ROOT, 'node_modules'), join(refDir, 'node_modules'));
+  // Windows directory junctions work without the file-symlink privilege.
+  symlinkSync(join(ROOT, 'node_modules'), join(refDir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   const before = snapshot(refDir, work);
   const after = snapshot(ROOT, work);
   const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
@@ -107,6 +108,13 @@ try {
   changed.slice(0, 20).forEach((k) => console.log(`  ≠ ${k}`));
   process.exitCode = changed.length || patchBroken.length ? 1 : 0;
 } finally {
+  // Unlink the junction BEFORE git removes the worktree: recursive cleanup can traverse it
+  // and delete files in the real node_modules directory on Windows.
+  try {
+    if (lstatSync(join(refDir, 'node_modules')).isSymbolicLink()) unlinkSync(join(refDir, 'node_modules'));
+  } catch (e) {
+    if (e.code !== 'ENOENT') throw e;
+  }
   execFileSync('git', ['-C', ROOT, 'worktree', 'remove', '--force', refDir], { stdio: 'ignore' });
   rmSync(work, { recursive: true, force: true });
 }
